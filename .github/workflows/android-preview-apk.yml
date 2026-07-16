@@ -1,4 +1,4 @@
-name: Android Preview APK
+name: Android Play Internal Release
 
 on:
   push:
@@ -14,9 +14,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      APP_VARIANT: preview
+      APP_VARIANT: production
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=8192
+      T3CODE_ANDROID_VERSION_CODE: ${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -44,9 +45,61 @@ jobs:
       - name: Generate Android project
         run: pnpm --filter @t3tools/mobile exec expo prebuild --clean --platform android
 
-      - name: Build preview APK
+      - name: Configure release signing
         working-directory: apps/mobile/android
-        run: ./gradlew app:assembleRelease --no-daemon --no-parallel -x lint -x test
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release.jks
+          cat > keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build_file = Path("app/build.gradle")
+          source = build_file.read_text()
+          source = source.replace(
+              "    signingConfigs {\n        debug {",
+              "    def keystoreProperties = new Properties()\n"
+              "    keystoreProperties.load(rootProject.file('keystore.properties').newDataInputStream())\n"
+              "    signingConfigs {\n"
+              "        release {\n"
+              "            storeFile file(keystoreProperties['storeFile'])\n"
+              "            storePassword keystoreProperties['storePassword']\n"
+              "            keyAlias keystoreProperties['keyAlias']\n"
+              "            keyPassword keystoreProperties['keyPassword']\n"
+              "        }\n"
+              "        debug {",
+          )
+          source = source.replace("signingConfig signingConfigs.debug\n            def enableShrinkResources", "signingConfig signingConfigs.release\n            def enableShrinkResources")
+          build_file.write_text(source)
+          PY
+
+      - name: Set the Play package and version code
+        working-directory: apps/mobile/android
+        run: |
+          sed -i "s/applicationId 'com.t3tools.t3code'/applicationId 'com.arm8tron.t3code'/" app/build.gradle
+          sed -i "s/versionCode 1/versionCode $T3CODE_ANDROID_VERSION_CODE/" app/build.gradle
+
+      - name: Build Play bundle and APK
+        working-directory: apps/mobile/android
+        run: ./gradlew app:bundleRelease app:assembleRelease --no-daemon --no-parallel -x lint -x test
+
+      - name: Upload to Google Play Internal Testing
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.arm8tron.t3code
+          releaseFiles: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
