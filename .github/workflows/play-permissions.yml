@@ -27,8 +27,8 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
           PACKAGE_NAME: com.arm8tron.t3code
         run: |
-          gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
-          ACCESS_TOKEN=$(gcloud auth print-access-token)
+          ACCESS_TOKEN=$(gcloud auth application-default print-access-token \
+            --scopes=https://www.googleapis.com/auth/androidpublisher)
           response_file=$(mktemp)
           status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
             --request POST \
