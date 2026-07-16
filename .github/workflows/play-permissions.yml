@@ -1,6 +1,10 @@
 name: Play Console Permission Check
 
 on:
+  push:
+    branches: [android-release]
+    paths:
+      - .github/workflows/play-permissions.yml
   workflow_dispatch:
 
 permissions:
