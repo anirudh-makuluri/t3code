@@ -42,6 +42,11 @@ jobs:
           echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
           "$vp_pnpm_bin/pnpm" --version
 
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h
+
       - name: Generate Android project
         run: pnpm --filter @t3tools/mobile exec expo prebuild --clean --platform android
 
@@ -88,9 +93,9 @@ jobs:
           sed -i "s/applicationId 'com.t3tools.t3code'/applicationId 'com.arm8tron.t3code'/" app/build.gradle
           sed -i "s/versionCode 1/versionCode $T3CODE_ANDROID_VERSION_CODE/" app/build.gradle
 
-      - name: Build Play bundle and APK
+      - name: Build Play bundle
         working-directory: apps/mobile/android
-        run: ./gradlew app:bundleRelease app:assembleRelease --no-daemon --no-parallel -x lint -x test
+        run: ./gradlew app:bundleRelease --no-daemon --no-parallel -x lint -x test
 
       - name: Upload to Google Play Internal Testing
         uses: r0adkll/upload-google-play@v1
@@ -101,10 +106,10 @@ jobs:
           track: internal
           status: completed
 
-      - name: Upload APK
+      - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
-          name: t3-code-preview-apk
-          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          name: t3-code-play-bundle
+          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
