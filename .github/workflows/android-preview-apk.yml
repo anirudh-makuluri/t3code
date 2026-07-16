@@ -3,6 +3,9 @@ name: Android Play Internal Release
 on:
   push:
     branches: [android-release]
+    paths:
+      - apps/mobile/**
+      - pnpm-lock.yaml
   workflow_dispatch:
 
 permissions:

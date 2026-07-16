@@ -1,0 +1,36 @@
+name: Play Console Permission Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verify Play Internal Testing access
+    runs-on: ubuntu-24.04
+    steps:
+      - id: auth
+        name: Authenticate service account
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+
+      - name: Create and abandon an empty Play edit
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          PACKAGE_NAME: com.arm8tron.t3code
+        run: |
+          edit=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data '{}' \
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE_NAME/edits")
+          edit_id=$(jq --raw-output '.id' <<< "$edit")
+          trap 'curl --fail-with-body --silent --show-error --request DELETE --header "Authorization: Bearer $ACCESS_TOKEN" "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE_NAME/edits/$edit_id"' EXIT
+          test -n "$edit_id"
+          echo "Service account can create Play edits for $PACKAGE_NAME."
