@@ -29,12 +29,19 @@ jobs:
         run: |
           gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
           ACCESS_TOKEN=$(gcloud auth print-access-token)
-          edit=$(curl --fail-with-body --silent --show-error \
+          response_file=$(mktemp)
+          status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
             --request POST \
             --header "Authorization: Bearer $ACCESS_TOKEN" \
             --header "Content-Type: application/json" \
             --data '{}' \
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE_NAME/edits")
+          if [[ "$status" != 2* ]]; then
+            echo "Play Developer API request failed (HTTP $status):"
+            cat "$response_file"
+            exit 1
+          fi
+          edit=$(<"$response_file")
           edit_id=$(jq --raw-output '.id' <<< "$edit")
           trap 'curl --fail-with-body --silent --show-error --request DELETE --header "Authorization: Bearer $ACCESS_TOKEN" "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE_NAME/edits/$edit_id"' EXIT
           test -n "$edit_id"
