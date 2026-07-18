@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import {
   KeyboardAvoidingView,
-  KeyboardStickyView,
   useKeyboardState,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -75,7 +76,19 @@ export function NewTaskDraftScreen(props: {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
-  const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
+  const closedBottomPadding = Math.max(insets.bottom, 10);
+  // iOS path still uses a discrete bottom pad; Android animates from the IME height.
+  const controlsBottomPadding = isKeyboardVisible ? 8 : closedBottomPadding;
+  // Shared keyboard height is 0 when closed and negative while open. Drive the
+  // Android draft composer with that value so the toolbar stays above the IME
+  // even when absolute sticky positioning is unreliable in the nested sheet stack.
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const androidComposerBottomStyle = useAnimatedStyle(() => {
+    const keyboardLift = -keyboardHeight.value;
+    return {
+      paddingBottom: keyboardLift > 0 ? keyboardLift + 8 : closedBottomPadding,
+    };
+  }, [closedBottomPadding]);
   const { logicalProjects, selectedProject, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const environmentConnected =
@@ -723,84 +736,83 @@ export function NewTaskDraftScreen(props: {
 
   if (isAndroid) {
     // The draft is a thread that doesn't exist yet, so it mirrors the thread
-    // page: in-screen header, empty feed canvas above, and the same floating
-    // composer chrome as ThreadComposer (collapsed pill → expanded card).
+    // page: in-screen header, empty feed canvas above, and the same composer
+    // chrome as ThreadComposer (collapsed pill → expanded card).
+    //
+    // Unlike an open thread, there is no scroll feed under the composer, so we
+    // keep the composer in normal document flow and lift it with IME-driven
+    // bottom padding. Absolute KeyboardStickyView was unreliable here inside the
+    // nested NewTask sheet stack (composer stayed under the soft keyboard).
     return (
-      <View className="flex-1 bg-screen">
+      <View collapsable={false} className="flex-1 bg-screen">
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
         <View className="flex-1" />
 
-        {/* Match the existing-thread composer: Android's IME animation drives
-            the whole composer above the keyboard instead of padding an empty
-            flex layout beneath it. */}
-        <KeyboardStickyView
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          offset={{ closed: 0, opened: 0 }}
-        >
-          <View
-            className="px-4 pt-2"
-            style={{
-              paddingBottom: controlsBottomPadding,
+        <Animated.View
+          className="px-4 pt-2"
+          style={[
+            androidComposerBottomStyle,
+            {
               experimental_backgroundImage: isDarkMode
                 ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
                 : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
-            }}
+            },
+          ]}
+        >
+          <ComposerSurface
+            isDarkMode={isDarkMode}
+            style={
+              isExpanded
+                ? {
+                    borderRadius: 20,
+                    overflow: "hidden",
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                  }
+                : {
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingLeft: 18,
+                    paddingRight: 5,
+                    paddingVertical: 5,
+                  }
+            }
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
-            >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={flow.removeAttachment}
-                  />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
+            {isExpanded && flow.attachments.length > 0 ? (
+              <View className="pb-2.5">
+                <ComposerAttachmentStrip
+                  attachments={flow.attachments}
+                  onRemove={flow.removeAttachment}
                 />
-              ) : null}
-            </ComposerSurface>
-
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
+              </View>
             ) : null}
-          </View>
-        </KeyboardStickyView>
+            <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+            {!isExpanded ? (
+              <ControlPill
+                icon="arrow.up"
+                variant="primary"
+                disabled={!canStart}
+                onPress={() => void handleStart()}
+              />
+            ) : null}
+          </ComposerSurface>
+
+          {isExpanded ? (
+            <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+              <ComposerToolbarScroller
+                fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+              >
+                {toolbarPills}
+              </ComposerToolbarScroller>
+              {startButton}
+            </ComposerToolbarRow>
+          ) : null}
+        </Animated.View>
       </View>
     );
   }
